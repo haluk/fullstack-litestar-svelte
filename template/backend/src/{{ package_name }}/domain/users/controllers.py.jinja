@@ -1,0 +1,43 @@
+from typing import Any
+from uuid import UUID
+
+from litestar import Controller, Request, Response, get, post
+from litestar.di import Provide
+from litestar.exceptions import NotAuthorizedException
+
+from {{ package_name }}.domain.users.deps import provide_users_service
+from {{ package_name }}.domain.users.schemas import LoginPayload, UserCreate, UserRead
+from {{ package_name }}.domain.users.services import UserService
+
+
+class UserController(Controller):
+    path = "/users"
+    tags = ["users"]
+    dependencies = {"users_service": Provide(provide_users_service)}
+
+    @get()
+    async def list_users(self, users_service: UserService) -> list[UserRead]:
+        users, _ = await users_service.get_many_and_count()
+        return [UserRead.from_model(u) for u in users]
+
+    @get("/{user_id:uuid}")
+    async def get_user(self, users_service: UserService, user_id: UUID) -> UserRead:
+        return UserRead.from_model(await users_service.get(user_id))
+
+
+class AuthController(Controller):
+    tags = ["auth"]
+    dependencies = {"users_service": Provide(provide_users_service)}
+
+    @post("/register")
+    async def register(self, users_service: UserService, data: UserCreate) -> UserRead:
+        user = await users_service.create_user(data)
+        return UserRead.from_model(user)
+
+    @post("/login")
+    async def login(self, request: Request, users_service: UserService, data: LoginPayload) -> Response[Any]:
+        user = await users_service.authenticate(data.email, data.password)
+        if user is None:
+            raise NotAuthorizedException("Invalid credentials")
+        jwt_auth = request.app.state["jwt_auth"]
+        return jwt_auth.login(identifier=str(user.id), send_token_as_response_body=True)

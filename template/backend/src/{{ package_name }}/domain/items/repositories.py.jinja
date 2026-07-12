@@ -1,0 +1,7 @@
+from advanced_alchemy.repository import SQLAlchemyAsyncRepository
+
+from {{ package_name }}.domain.items.models import Item
+
+
+class ItemRepository(SQLAlchemyAsyncRepository[Item]):
+    model_type = Item

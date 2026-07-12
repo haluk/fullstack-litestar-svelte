@@ -1,0 +1,31 @@
+# {{ project_name }} — frontend
+
+SvelteKit + shadcn-svelte (bun, adapter-node, Tailwind v4). Talks to the backend at `/api`.
+
+## Develop
+
+```bash
+bun install
+bun run dev        # proxies /api → http://localhost:8000
+```
+
+## Test
+
+```bash
+bun run test:unit   # vitest (jsdom) component/unit tests
+bunx playwright install    # once
+bun run test:e2e    # Playwright smoke (builds + previews)
+```
+
+## Build
+
+```bash
+bun run build       # adapter-node → build/
+node build          # run (set PORT / ORIGIN in production)
+```
+
+## Auth
+
+Login posts to `/api/login`; the returned JWT is stored in an httpOnly `auth_token`
+cookie by `src/routes/login/+page.server.ts`. `src/hooks.server.ts` injects it as a
+Bearer header on server-side `/api` calls. `/items` is guarded and redirects to `/login`.

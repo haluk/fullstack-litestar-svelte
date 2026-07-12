@@ -1,0 +1,61 @@
+"""Shared test fixtures for the {{ project_name }} backend."""
+from collections.abc import AsyncIterator, Iterator
+
+import pytest
+from advanced_alchemy.base import UUIDAuditBase
+from litestar.testing import AsyncTestClient
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from {{ package_name }}.app import create_app
+
+
+def _docker_available() -> bool:
+    client = None
+    try:
+        import docker  # noqa: PLC0415
+
+        client = docker.from_env()
+        client.ping()
+        return True
+    except Exception:
+        return False
+    finally:
+        if client is not None:
+            client.close()
+
+
+@pytest.fixture(scope="session")
+def postgres_url() -> Iterator[str]:
+    if not _docker_available():
+        pytest.skip("Docker not available for testcontainers")
+    from testcontainers.postgres import PostgresContainer  # noqa: PLC0415
+
+    with PostgresContainer("postgres:16-alpine") as postgres:
+        sync_url = postgres.get_connection_url()  # postgresql+psycopg2://...
+        yield sync_url.replace("postgresql+psycopg2", "postgresql+asyncpg")
+
+
+@pytest.fixture
+async def app_client() -> AsyncIterator[AsyncTestClient]:
+    """Client with no database (health/unit routes)."""
+    async with AsyncTestClient(app=create_app()) as client:
+        yield client
+
+
+@pytest.fixture
+async def client(postgres_url: str, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncTestClient]:
+    """Client backed by a disposable Postgres, schema created fresh."""
+    monkeypatch.setenv("DATABASE_URL", postgres_url)
+    monkeypatch.setenv("JWT_SECRET", "test-jwt-secret-key-0123456789abcdef")
+    # Import models so their tables register on the shared metadata.
+    import {{ package_name }}.domain.items.models  # noqa: F401,PLC0415
+    import {{ package_name }}.domain.users.models  # noqa: F401,PLC0415
+
+    engine = create_async_engine(postgres_url)
+    async with engine.begin() as conn:
+        await conn.run_sync(UUIDAuditBase.metadata.drop_all)
+        await conn.run_sync(UUIDAuditBase.metadata.create_all)
+    await engine.dispose()
+
+    async with AsyncTestClient(app=create_app()) as test_client:
+        yield test_client

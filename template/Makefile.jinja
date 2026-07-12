@@ -1,0 +1,90 @@
+# {{ project_name }} — task runner (mirror of the justfile, for `make` users)
+
+# load the generated .env so $(BACKEND_PORT), $(FRONTEND_PORT), etc. are available
+-include .env
+export
+
+.DEFAULT_GOAL := help
+
+.PHONY: help bootstrap db be-upgrade be-run fe-run dev up down prod prod-down \
+        migrate makemigration lint fmt check be-test fe-test test build
+
+help: ## list available targets
+	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
+		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+
+bootstrap: ## install backend + frontend deps
+	cd backend && uv sync
+	cd frontend && bun install
+
+# --- local (host) development: run api + web on your machine against the dockerized db ---
+
+db: ## start only Postgres (for host-based backend/frontend runs)
+	docker compose up -d db
+
+be-upgrade: ## apply migrations to the local db (reads DATABASE_URL from .env)
+	cd backend && LITESTAR_APP={{ package_name }}.app:app uv run litestar database upgrade --no-prompt
+
+be-run: ## run the backend on your machine with autoreload
+	cd backend && LITESTAR_APP={{ package_name }}.app:app uv run litestar run --reload --port "$(BACKEND_PORT)"
+
+fe-run: ## run the frontend dev server on your machine
+	# SvelteKit SSR fetches the API via INTERNAL_API_URL. The .env value
+	# (http://api:8000) is the docker-internal host and unreachable here, so point
+	# it at localhost. (Browser /api calls use Vite's proxy.)
+	cd frontend && INTERNAL_API_URL=http://localhost:$(BACKEND_PORT) bun run dev --host localhost --port "$(FRONTEND_PORT)"
+
+# --- dockerized development ---
+
+dev: ## dev stack (postgres + api reload + web dev)
+	docker compose up
+
+up: ## dev stack in the background
+	docker compose up -d
+
+down: ## stop the dev stack
+	docker compose down
+
+prod: ## production stack (nginx + web + api + db)
+	docker compose -f compose.prod.yaml up -d --build
+
+prod-down: ## stop the production stack
+	docker compose -f compose.prod.yaml down
+
+# --- database migrations (advanced-alchemy / alembic via litestar CLI) ---
+
+migrate: ## apply migrations inside the api container
+	docker compose exec api uv run litestar database upgrade
+
+makemigration: ## create a migration: make makemigration MESSAGE="your message"
+	docker compose exec api uv run litestar database make-migrations -m "$(MESSAGE)"
+
+# --- lint / format / test ---
+
+lint: ## lint backend + frontend
+	cd backend && uv run ruff check .
+	cd frontend && bun run check
+
+fmt: ## format backend
+	cd backend && uv run ruff format .
+
+check: ## run code quality tools on backend
+	@echo "Checking lock file consistency with 'pyproject.toml'"
+	cd backend && uv lock --locked
+	@echo "Linting code: Running pre-commit"
+	cd backend && uv run pre-commit run -a
+	@echo "Static type checking: Running mypy"
+	cd backend && uv run mypy
+	@echo "Checking for obsolete dependencies: Running deptry"
+	cd backend && uv run deptry .
+
+be-test: ## backend tests
+	cd backend && uv run python -m pytest --cov --cov-config=pyproject.toml --cov-report=xml tests
+
+fe-test: ## frontend unit tests
+	cd frontend && bun run test:unit
+
+test: be-test fe-test ## run backend + frontend tests
+
+build: ## build production images
+	docker compose -f compose.prod.yaml build

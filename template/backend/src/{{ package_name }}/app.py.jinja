@@ -1,0 +1,41 @@
+"""Litestar application factory."""
+from litestar import Litestar, Router, get
+from litestar.datastructures import State
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from {{ package_name }}.config import get_settings
+from {{ package_name }}.domain.items.controllers import ItemController
+from {{ package_name }}.domain.users.controllers import AuthController, UserController
+from {{ package_name }}.lib.auth import build_jwt_auth
+from {{ package_name }}.lib.db import sqlalchemy_plugin
+
+
+@get("/health", sync_to_thread=False)
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@get("/db-check")
+async def db_check(db_session: AsyncSession) -> dict[str, int]:
+    result = await db_session.execute(text("SELECT 1"))
+    return {"db": result.scalar_one()}
+
+
+def create_app() -> Litestar:
+    settings = get_settings()
+    jwt_auth = build_jwt_auth(settings)
+    api_router = Router(
+        path="/api",
+        route_handlers=[health, db_check, UserController, AuthController, ItemController],
+    )
+    return Litestar(
+        route_handlers=[api_router],
+        plugins=[sqlalchemy_plugin(settings)],
+        on_app_init=[jwt_auth.on_app_init],
+        state=State({"jwt_auth": jwt_auth}),
+        debug=settings.debug,
+    )
+
+
+app = create_app()

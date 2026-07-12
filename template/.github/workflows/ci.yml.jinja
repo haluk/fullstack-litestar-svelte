@@ -1,0 +1,61 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app" --health-interval 5s
+          --health-timeout 5s --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "{{ python_version }}"
+      - run: uv sync
+      - run: uv run ruff check .
+      - run: uv run mypy src
+      - run: uv run pytest
+        env:
+          DATABASE_URL: postgresql+asyncpg://app:app@localhost:5432/app
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun run check
+      - run: bun run test:unit
+      - run: bun run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Full-stack e2e
+        run: |
+          chmod +x scripts/e2e-stack.sh
+          ./scripts/e2e-stack.sh
+        env:
+          POSTGRES_PASSWORD: e2e
+          JWT_SECRET: e2e-secret-key-0123456789abcdef
+          ORIGIN: http://localhost

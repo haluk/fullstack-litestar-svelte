@@ -1,0 +1,58 @@
+# {{ project_name }}
+
+Full-stack monorepo generated from `copier-uv-fullstack`.
+
+- **Backend:** Litestar + advanced-alchemy (Postgres), package `{{ package_name }}`
+- **Frontend:** SvelteKit + shadcn-svelte
+- **Deploy:** docker compose + nginx
+
+## Layout
+
+```
+{{ project_slug }}/
+├── backend/    # Litestar API (uv)
+├── frontend/   # SvelteKit app (bun)
+├── deploy/     # nginx config
+├── compose.yaml
+├── justfile     # task runner
+└── Makefile     # same tasks for `make` users
+```
+
+> Every `just <task>` below has an identical `make <task>` target — use whichever you prefer.
+
+## Getting started
+
+A git-ignored `.env` was generated with your answers — review it first.
+
+### Dockerized (everything in containers)
+
+```bash
+just dev        # postgres + api (reload) + web (dev) via docker compose
+```
+
+The web dev server is published on `http://localhost:{{ frontend_port }}`. The first
+`just dev`/`just up` is slow because it runs `bun install` in the container — wait for the
+`VITE ... ready` line (`docker compose logs -f web`) before opening the page.
+
+### Local (run api + web on your machine)
+
+Runs the backend and frontend directly on your host against a dockerized Postgres. The
+`.env` `DATABASE_URL` already points at `{{ db_host }}:{{ db_port }}`, and Vite proxies
+`/api` to the local backend.
+
+```bash
+just bootstrap  # uv sync + bun install (once)
+just db         # start only Postgres in docker
+just be-upgrade # apply migrations to the local db (once, and after new migrations)
+just be-run     # backend  -> http://localhost:{{ backend_port }}
+just fe-run     # frontend -> http://localhost:{{ frontend_port }}  (in a second terminal)
+```
+
+Prefer a local Postgres over docker? Set `DATABASE_URL` in `.env` to point at it and skip
+`just db`.
+
+## Updating from the template
+
+```bash
+copier update --trust
+```

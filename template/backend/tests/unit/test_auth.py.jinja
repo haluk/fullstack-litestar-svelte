@@ -1,0 +1,20 @@
+import re
+
+from {{ package_name }}.lib.auth import JWT_EXCLUDE
+
+
+def test_exclude_patterns_are_anchored() -> None:
+    assert all(p.startswith("^") for p in JWT_EXCLUDE)
+
+
+def test_exclude_does_not_leak_via_substring() -> None:
+    # a bare "/api/register" pattern would have matched these; anchored patterns must not
+    assert not any(re.search(p, "/admin/api/register") for p in JWT_EXCLUDE)
+    assert not any(re.search(p, "/admin/api/users") for p in JWT_EXCLUDE)
+    # protected routes are not matched
+    assert not any(re.search(p, "/api/items") for p in JWT_EXCLUDE)
+    assert not any(re.search(p, "/api/users") for p in JWT_EXCLUDE)
+    # real public routes still match
+    assert any(re.search(p, "/api/login") for p in JWT_EXCLUDE)
+    assert any(re.search(p, "/api/register") for p in JWT_EXCLUDE)
+    assert any(re.search(p, "/api/health") for p in JWT_EXCLUDE)

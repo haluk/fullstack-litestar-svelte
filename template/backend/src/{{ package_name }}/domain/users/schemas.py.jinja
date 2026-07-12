@@ -1,0 +1,30 @@
+from __future__ import annotations
+
+from datetime import datetime
+from uuid import UUID
+
+import msgspec
+
+from {{ package_name }}.domain.users.models import User
+
+
+class UserCreate(msgspec.Struct):
+    email: str
+    name: str
+    password: str
+
+
+class UserRead(msgspec.Struct):
+    id: UUID
+    email: str
+    name: str
+    created_at: datetime
+
+    @classmethod
+    def from_model(cls, user: User) -> "UserRead":
+        return cls(id=user.id, email=user.email, name=user.name, created_at=user.created_at)
+
+
+class LoginPayload(msgspec.Struct):
+    email: str
+    password: str

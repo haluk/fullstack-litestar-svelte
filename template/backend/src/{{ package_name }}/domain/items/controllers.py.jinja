@@ -1,0 +1,32 @@
+from uuid import UUID
+
+from litestar import Controller, delete, get, post
+from litestar.di import Provide
+
+from {{ package_name }}.domain.items.deps import provide_items_service
+from {{ package_name }}.domain.items.schemas import ItemCreate, ItemRead
+from {{ package_name }}.domain.items.services import ItemService
+
+
+class ItemController(Controller):
+    path = "/items"
+    tags = ["items"]
+    dependencies = {"items_service": Provide(provide_items_service)}
+
+    @get()
+    async def list_items(self, items_service: ItemService) -> list[ItemRead]:
+        items, _ = await items_service.get_many_and_count()
+        return [ItemRead.from_model(i) for i in items]
+
+    @get("/{item_id:uuid}")
+    async def get_item(self, items_service: ItemService, item_id: UUID) -> ItemRead:
+        return ItemRead.from_model(await items_service.get(item_id))
+
+    @post()
+    async def create_item(self, items_service: ItemService, data: ItemCreate) -> ItemRead:
+        item = await items_service.create({"name": data.name, "description": data.description})
+        return ItemRead.from_model(item)
+
+    @delete("/{item_id:uuid}")
+    async def delete_item(self, items_service: ItemService, item_id: UUID) -> None:
+        await items_service.delete(item_id)

@@ -1,0 +1,66 @@
+import pytest
+from advanced_alchemy.base import UUIDAuditBase
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+async def session(postgres_url: str) -> AsyncSession:
+    import {{ package_name }}.domain.users.models  # noqa: F401
+    engine = create_async_engine(postgres_url)
+    async with engine.begin() as conn:
+        await conn.run_sync(UUIDAuditBase.metadata.create_all)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as s:
+        yield s
+    await engine.dispose()
+
+
+async def test_create_user_hashes_password(session) -> None:
+    from {{ package_name }}.domain.users.schemas import UserCreate
+    from {{ package_name }}.domain.users.services import UserService
+
+    service = UserService(session=session)
+    user = await service.create_user(UserCreate(email="a@b.com", name="Ada", password="pw12345"))
+    await session.commit()
+
+    assert user.email == "a@b.com"
+    assert user.hashed_password != "pw12345"  # stored hashed, not plaintext
+
+
+async def test_authenticate_success_and_failure(session) -> None:
+    from {{ package_name }}.domain.users.schemas import UserCreate
+    from {{ package_name }}.domain.users.services import UserService
+
+    service = UserService(session=session)
+    await service.create_user(UserCreate(email="c@d.com", name="Grace", password="secret99"))
+    await session.commit()
+
+    assert await service.authenticate("c@d.com", "secret99") is not None
+    assert await service.authenticate("c@d.com", "wrong") is None
+    assert await service.authenticate("nobody@x.com", "secret99") is None
+
+
+async def test_register_login_and_list(client) -> None:
+    # register
+    resp = await client.post("/api/register", json={"email": "e@f.com", "name": "Edsger", "password": "pw123456"})
+    assert resp.status_code == 201
+    assert resp.json()["email"] == "e@f.com"
+    assert "hashed_password" not in resp.json()  # never leak the hash
+
+    # login returns a token
+    resp = await client.post("/api/login", json={"email": "e@f.com", "password": "pw123456"})
+    assert resp.status_code == 201
+    token = resp.json()["token"]
+    assert token
+
+    # login with wrong password is rejected
+    resp = await client.post("/api/login", json={"email": "e@f.com", "password": "nope"})
+    assert resp.status_code == 401
+
+    # users list requires auth
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = await client.get("/api/users", headers=headers)
+    assert resp.status_code == 200
+    assert any(u["email"] == "e@f.com" for u in resp.json())

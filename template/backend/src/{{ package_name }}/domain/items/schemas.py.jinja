@@ -1,0 +1,24 @@
+from __future__ import annotations
+
+from datetime import datetime
+from uuid import UUID
+
+import msgspec
+
+from {{ package_name }}.domain.items.models import Item
+
+
+class ItemCreate(msgspec.Struct):
+    name: str
+    description: str | None = None
+
+
+class ItemRead(msgspec.Struct):
+    id: UUID
+    name: str
+    description: str | None
+    created_at: datetime
+
+    @classmethod
+    def from_model(cls, item: Item) -> "ItemRead":
+        return cls(id=item.id, name=item.name, description=item.description, created_at=item.created_at)

@@ -1,0 +1,59 @@
+services:
+  db:
+    image: postgres:alpine
+    environment:
+      POSTGRES_DB: {{ db_name }}
+      POSTGRES_USER: {{ db_user }}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ db_user }} -d {{ db_name }}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      target: runtime
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://{{ db_user }}:${POSTGRES_PASSWORD}@db:5432/{{ db_name }}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      LITESTAR_APP: {{ package_name }}.app:app
+    command: sh -c "litestar database upgrade --no-prompt && litestar run --host 0.0.0.0 --port 8000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+      target: runtime
+    depends_on:
+      - api
+    environment:
+      ORIGIN: ${ORIGIN:-http://localhost}
+      INTERNAL_API_URL: http://api:8000
+      PROTOCOL_HEADER: x-forwarded-proto
+      HOST_HEADER: x-forwarded-host
+      ADDRESS_HEADER: x-forwarded-for
+      XFF_DEPTH: "1"
+      BODY_SIZE_LIMIT: 10M
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    depends_on:
+      - api
+      - web
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+volumes:
+  db_data:

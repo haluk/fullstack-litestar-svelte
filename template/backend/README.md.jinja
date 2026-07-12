@@ -1,0 +1,47 @@
+# {{ project_name }} — backend
+
+Litestar API with a layered architecture (repository → service → controller),
+advanced-alchemy (SQLAlchemy 2.0 async + Alembic) on Postgres, and JWT auth.
+
+## Develop
+
+```bash
+uv sync
+export LITESTAR_APP={{ package_name }}.app:app
+uv run litestar run --reload
+```
+
+## Migrations
+
+```bash
+uv run litestar database make-migrations   # autogenerate a revision
+uv run litestar database upgrade           # apply
+```
+
+## Test
+
+```bash
+uv run pytest                 # unit + integration (integration needs Docker)
+uv run pytest -m "not integration"   # unit only
+```
+
+## Layout
+
+- `src/{{ package_name }}/domain/<area>/` — one module per domain (model, repository, service, schemas, controller, deps)
+- `src/{{ package_name }}/lib/` — db, security, auth
+- `src/{{ package_name }}/config.py` — pydantic-settings
+
+## Upgrading to Litestar 3
+
+The `litestar` dependency is pinned to `>=2.24,<3` for now, and
+`pyproject.toml`'s `[tool.pytest.ini_options]` silences the Litestar 2.24
+forward-compat deprecation warnings for inferred dependency injection and
+inferred path parameters (plus an upstream advanced-alchemy call to its own
+deprecated `set_async_context`). When upgrading to Litestar 3.0:
+
+1. Replace inferred dependencies with explicit `NamedDependency[...]` and
+   inferred path parameters with `FromPath[...]`.
+2. Drop the `filterwarnings` entries for `Inferred dependency field` and
+   `deprecated inferred style` (and `set_async_context` once advanced-alchemy
+   ships a fix upstream).
+3. Bump the `litestar` dependency bound.

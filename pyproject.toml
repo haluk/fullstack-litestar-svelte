@@ -1,0 +1,29 @@
+[project]
+name = "copier-uv-fullstack"
+version = "0.3.0"
+description = "Copier template for full-stack Litestar + SvelteKit monorepos"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "commitizen>=4.16.4",
+    "copier>=9.16.0",
+    "pre-commit>=4.6.0",
+    "pytest>=9.1.1",
+    "pyyaml>=6.0.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "pep621"
+tag_format = "v$version"
+update_changelog_on_bump = true
+
+[tool.uv]
+package = false

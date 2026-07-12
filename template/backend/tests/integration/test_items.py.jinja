@@ -1,0 +1,40 @@
+from uuid import uuid4
+
+import pytest
+
+pytestmark = pytest.mark.integration
+
+
+async def _token(client) -> str:
+    await client.post("/api/register", json={"email": "o@w.com", "name": "Owner", "password": "pw123456"})
+    resp = await client.post("/api/login", json={"email": "o@w.com", "password": "pw123456"})
+    return resp.json()["token"]
+
+
+async def test_item_crud_requires_auth_for_writes(client) -> None:
+    # unauthenticated create is rejected (items are protected)
+    resp = await client.post("/api/items", json={"name": "Widget"})
+    assert resp.status_code == 401
+
+    headers = {"Authorization": f"Bearer {await _token(client)}"}
+
+    # authenticated create
+    resp = await client.post("/api/items", json={"name": "Widget", "description": "a thing"}, headers=headers)
+    assert resp.status_code == 201
+    item_id = resp.json()["id"]
+
+    # read (also requires auth in this template)
+    resp = await client.get("/api/items", headers=headers)
+    assert resp.status_code == 200
+    assert any(i["id"] == item_id for i in resp.json())
+
+    # authenticated delete
+    resp = await client.delete(f"/api/items/{item_id}", headers=headers)
+    assert resp.status_code == 204
+
+
+async def test_get_missing_item_returns_404(client) -> None:
+    headers = {"Authorization": f"Bearer {await _token(client)}"}
+
+    resp = await client.get(f"/api/items/{uuid4()}", headers=headers)
+    assert resp.status_code == 404

@@ -1,0 +1,89 @@
+_subdirectory: template
+_answers_file: .copier-answers.yml
+
+project_name:
+  type: str
+  help: Human-readable project name
+
+project_slug:
+  type: str
+  help: Directory- and URL-safe slug
+  default: "{{ project_name | lower | replace(' ', '-') | replace('_', '-') }}"
+
+package_name:
+  type: str
+  help: Python package name for the backend
+  default: "{{ project_slug | replace('-', '_') }}"
+
+author_name:
+  type: str
+  help: Your full name
+
+author_email:
+  type: str
+  help: Your email address
+
+python_version:
+  type: str
+  help: Python version for the backend
+  default: "3.14"
+  choices:
+    - "3.11"
+    - "3.12"
+    - "3.13"
+    - "3.14"
+
+db_name:
+  type: str
+  help: Postgres database name
+  default: "{{ package_name }}"
+
+db_user:
+  type: str
+  help: Postgres user
+  default: "{{ package_name }}"
+
+db_password:
+  type: str
+  help: Postgres password (not stored in the answers file)
+  default: "changeme"
+  secret: true
+
+db_host:
+  type: str
+  help: Database host for local/host runs and external DBs (Docker Compose uses the internal 'db' service regardless)
+  default: "localhost"
+
+db_port:
+  type: int
+  help: Database port
+  default: 5432
+
+backend_port:
+  type: int
+  help: Host port for the backend API
+  default: 8000
+
+frontend_port:
+  type: int
+  help: Host port for the frontend
+  default: 3000
+
+domain:
+  type: str
+  help: Deployment domain
+  default: "localhost"
+
+bootstrap:
+  type: bool
+  help: Run uv sync and bun install after generation
+  default: false
+
+_tasks:
+  - "git init -q"
+  - command: "uv sync"
+    working_directory: "backend"
+    when: "{{ bootstrap }}"
+  - command: "bun install"
+    working_directory: "frontend"
+    when: "{{ bootstrap }}"

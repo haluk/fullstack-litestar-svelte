@@ -1,0 +1,27 @@
+"""JWT authentication wiring."""
+from litestar.connection import ASGIConnection
+from litestar.security.jwt import JWTAuth, Token
+
+from {{ package_name }}.config import Settings
+
+
+JWT_EXCLUDE = [
+    "^/api/health$",
+    "^/api/db-check$",
+    "^/schema",
+    "^/api/login$",
+    "^/api/register$",
+]
+
+
+async def retrieve_user_handler(token: Token, connection: ASGIConnection) -> str | None:
+    # The subject is the user id; handlers that need the full user load it via the service.
+    return token.sub
+
+
+def build_jwt_auth(settings: Settings) -> JWTAuth[str]:
+    return JWTAuth[str](
+        retrieve_user_handler=retrieve_user_handler,
+        token_secret=settings.jwt_secret,
+        exclude=JWT_EXCLUDE,
+    )

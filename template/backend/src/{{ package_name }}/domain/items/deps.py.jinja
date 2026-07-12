@@ -1,0 +1,7 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from {{ package_name }}.domain.items.services import ItemService
+
+
+async def provide_items_service(db_session: AsyncSession) -> ItemService:
+    return ItemService(session=db_session)
