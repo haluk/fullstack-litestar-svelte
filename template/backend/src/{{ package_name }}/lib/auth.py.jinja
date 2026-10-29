@@ -1,0 +1,124 @@
+"""Keycloak authentication: verify Keycloak-issued bearer tokens on every API request.
+
+Login, registration and user management happen in Keycloak. The frontend obtains an
+access token via OIDC and sends it as ``Authorization: Bearer <token>``; this module
+checks its signature (realm JWKS), issuer, audience and expiry.
+"""
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+import jwt
+import msgspec
+from litestar.concurrency import sync_to_thread
+from litestar.connection import ASGIConnection
+from litestar.exceptions import NotAuthorizedException, PermissionDeniedException
+from litestar.handlers.base import BaseRouteHandler
+from litestar.middleware import (
+    AbstractAuthenticationMiddleware,
+    AuthenticationResult,
+    DefineMiddleware,
+)
+from litestar.types import ASGIApp, Guard
+
+from {{ package_name }}.config import Settings
+
+AUTH_EXCLUDE = [
+    "^/api/health$",
+    "^/api/db-check$",
+    "^/schema",
+    "^/metrics$",  # only reachable inside the compose network; see observability.py
+]
+
+
+class KeycloakUser(msgspec.Struct):
+    """The authenticated principal, built from access-token claims."""
+
+    sub: str
+    username: str
+    email: str | None = None
+    name: str | None = None
+    roles: list[str] = msgspec.field(default_factory=list)
+
+    @classmethod
+    def from_claims(cls, claims: dict[str, Any]) -> KeycloakUser:
+        return cls(
+            sub=claims["sub"],
+            username=claims.get("preferred_username", claims["sub"]),
+            email=claims.get("email"),
+            name=claims.get("name"),
+            roles=list(claims.get("realm_access", {}).get("roles", [])),
+        )
+
+
+class SigningKeyProvider(Protocol):
+    def get_signing_key_from_jwt(self, token: str) -> Any: ...
+
+
+class KeycloakTokenVerifier:
+    def __init__(
+        self,
+        *,
+        issuer: str,
+        audience: str,
+        jwks_url: str | None = None,
+        key_provider: SigningKeyProvider | None = None,
+    ) -> None:
+        self.issuer = issuer
+        self.audience = audience
+        # PyJWKClient caches keys and refetches when an unknown key id (rotation) shows up.
+        self._keys: SigningKeyProvider = key_provider or jwt.PyJWKClient(
+            jwks_url or f"{issuer}/protocol/openid-connect/certs", cache_keys=True
+        )
+
+    def verify(self, token: str) -> dict[str, Any]:
+        """Return the token's claims, or raise ``jwt.PyJWTError`` if it is not acceptable."""
+        signing_key = self._keys.get_signing_key_from_jwt(token)
+        claims: dict[str, Any] = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=self.audience,
+            issuer=self.issuer,
+            options={"require": ["exp", "iat", "sub"]},
+        )
+        return claims
+
+
+class KeycloakAuthMiddleware(AbstractAuthenticationMiddleware):
+    def __init__(self, app: ASGIApp, *, verifier: KeycloakTokenVerifier, **kwargs: Any) -> None:
+        super().__init__(app, **kwargs)
+        self.verifier = verifier
+
+    async def authenticate_request(self, connection: ASGIConnection) -> AuthenticationResult:
+        scheme, _, token = connection.headers.get("Authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not token:
+            raise NotAuthorizedException("Missing bearer token")
+        try:
+            # key lookup may hit the network (JWKS fetch), so keep it off the event loop
+            claims = await sync_to_thread(self.verifier.verify, token)
+        except jwt.PyJWTError as exc:
+            raise NotAuthorizedException("Invalid or expired token") from exc
+        return AuthenticationResult(user=KeycloakUser.from_claims(claims), auth=claims)
+
+
+def build_keycloak_auth(
+    settings: Settings, verifier: KeycloakTokenVerifier | None = None
+) -> DefineMiddleware:
+    verifier = verifier or KeycloakTokenVerifier(
+        issuer=settings.keycloak_issuer,
+        audience=settings.keycloak_audience,
+        jwks_url=settings.keycloak_jwks_url,
+    )
+    return DefineMiddleware(KeycloakAuthMiddleware, verifier=verifier, exclude=AUTH_EXCLUDE)
+
+
+def requires_realm_role(role: str) -> Guard:
+    """Route guard: allow only users holding the given Keycloak realm role."""
+
+    def guard(connection: ASGIConnection, _: BaseRouteHandler) -> None:
+        user = connection.user
+        if not isinstance(user, KeycloakUser) or role not in user.roles:
+            raise PermissionDeniedException(f"Requires the '{role}' role")
+
+    return guard

@@ -1,0 +1,90 @@
+"""Logging, request logging, rate limiting and metrics wiring."""
+import copy
+from typing import Any
+
+from litestar import Request
+from litestar.config.cors import CORSConfig
+from litestar.logging.config import LoggingConfig, default_handlers
+from litestar.middleware import DefineMiddleware
+from litestar.middleware.logging import LoggingMiddlewareConfig
+from litestar.middleware.rate_limit import RateLimitConfig, get_remote_address
+from litestar.plugins.prometheus import PrometheusConfig
+
+from {{ package_name }}.config import Settings
+from {{ package_name }}.lib.auth import KeycloakUser
+from {{ package_name }}.lib.request_id import REQUEST_ID_HEADER, RequestIdFilter
+
+# Endpoints hit by probes and scrapers: kept out of request logs, rate limits and metrics.
+NOISY_PATHS = ["^/api/health$", "^/metrics$"]
+
+
+def logging_config(settings: Settings) -> LoggingConfig:
+    handlers = copy.deepcopy(default_handlers)
+    # Records are queued and formatted on a background thread, so read the request id
+    # where they enter the queue, while the request's context is still current.
+    handlers["queue_listener"]["filters"] = ["request_id"]
+    return LoggingConfig(
+        filters={"request_id": {"()": RequestIdFilter}},
+        formatters={
+            "standard": {"format": "%(asctime)s %(levelname)s [%(request_id)s] %(name)s: %(message)s"}
+        },
+        handlers=handlers,
+        loggers={"litestar": {"level": settings.log_level, "handlers": ["queue_listener"], "propagate": False}},
+        root={"handlers": ["queue_listener"], "level": settings.log_level},
+        # log unhandled exceptions in production too, not only in debug mode; client
+        # errors (4xx) are expected and already show up in the request log
+        log_exceptions="always",
+        disable_stack_trace=set(range(400, 500)),
+    )
+
+
+def request_logging(settings: Settings) -> DefineMiddleware | None:
+    if not settings.log_requests:
+        return None
+    return LoggingMiddlewareConfig(
+        exclude=NOISY_PATHS,
+        request_log_fields=["method", "path", "query", "headers"],
+        response_log_fields=["status_code"],
+        # bearer tokens and cookies are credentials: never write them to logs
+        request_headers_to_obfuscate={"Authorization", "Cookie", "X-API-KEY"},
+        response_headers_to_obfuscate={"Set-Cookie"},
+    ).middleware
+
+
+def cors_config(settings: Settings) -> CORSConfig | None:
+    if not settings.cors_origins:
+        return None
+    return CORSConfig(
+        allow_origins=settings.cors_origins,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", REQUEST_ID_HEADER],
+        expose_headers=[REQUEST_ID_HEADER],
+        # bearer tokens travel in a header, so the API never needs browser credentials
+        allow_credentials=False,
+    )
+
+
+def _rate_limit_identifier(request: Request[Any, Any, Any]) -> str:
+    # Requests arrive via SvelteKit/nginx, so the client IP is mostly the proxy's:
+    # limit per Keycloak user instead, falling back to the IP for anonymous calls.
+    user = request.scope.get("user")
+    if isinstance(user, KeycloakUser):
+        return f"user:{user.sub}"
+    return f"ip:{get_remote_address(request)}"
+
+
+def rate_limit(settings: Settings) -> DefineMiddleware | None:
+    if settings.rate_limit_per_minute <= 0:
+        return None
+    return RateLimitConfig(
+        rate_limit=("minute", settings.rate_limit_per_minute),
+        exclude=NOISY_PATHS,
+        identifier_for_request=_rate_limit_identifier,
+    ).middleware
+
+
+def prometheus_config(settings: Settings) -> PrometheusConfig | None:
+    if not settings.metrics_enabled:
+        return None
+    # group_path labels by route template (/api/items/{item_id}), keeping cardinality low
+    return PrometheusConfig(app_name="{{ package_name }}", prefix="{{ package_name }}", exclude=NOISY_PATHS, group_path=True)
