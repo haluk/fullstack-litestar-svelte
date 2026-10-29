@@ -1,0 +1,44 @@
+"""Request IDs: accept a well-formed X-Request-ID from upstream (nginx, SvelteKit) or mint
+one, expose it to log records, and echo it on the response for cross-service tracing."""
+import logging
+import re
+import uuid
+from contextvars import ContextVar
+
+from litestar.datastructures import MutableScopeHeaders
+from litestar.enums import ScopeType
+from litestar.middleware import ASGIMiddleware
+from litestar.types import ASGIApp, Message, Receive, Scope, Send
+
+REQUEST_ID_HEADER = "x-request-id"
+_VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
+
+
+class RequestIdMiddleware(ASGIMiddleware):
+    scopes = (ScopeType.HTTP,)
+
+    async def handle(self, scope: Scope, receive: Receive, send: Send, next_app: ASGIApp) -> None:
+        incoming = MutableScopeHeaders(scope).get(REQUEST_ID_HEADER, "")
+        # never trust arbitrary input into logs: fall back to a fresh id if it looks wrong
+        request_id = incoming if _VALID_REQUEST_ID.match(incoming) else uuid.uuid4().hex
+        token = request_id_var.set(request_id)
+
+        async def send_with_request_id(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                MutableScopeHeaders.from_message(message)[REQUEST_ID_HEADER] = request_id
+            await send(message)
+
+        try:
+            await next_app(scope, receive, send_with_request_id)
+        finally:
+            request_id_var.reset(token)
+
+
+class RequestIdFilter(logging.Filter):
+    """Adds ``request_id`` to every log record (``-`` outside a request)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id_var.get()
+        return True

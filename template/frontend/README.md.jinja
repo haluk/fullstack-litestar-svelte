@@ -1,0 +1,46 @@
+# {{ project_name }} — frontend
+
+SvelteKit + shadcn-svelte (bun, adapter-node, Tailwind v4). Talks to the backend at `/api`.
+
+## Pages
+
+- `/` — landing page
+- `/dashboard` — stats, a 14-day activity chart and recent items from `GET /api/dashboard` (sign-in required)
+- `/items` — create and delete items (sign-in required)
+
+## Develop
+
+```bash
+bun install
+bun run dev        # proxies /api → http://localhost:8000
+```
+
+## Test
+
+```bash
+bun run test:unit   # vitest (jsdom) component/unit tests
+bunx playwright install    # once
+bun run test:e2e    # Playwright smoke (builds + previews)
+```
+
+## Build
+
+```bash
+bun run build       # adapter-node → build/
+node build          # run (set PORT / ORIGIN in production)
+```
+
+## Auth
+
+Authentication is delegated to Keycloak via OpenID Connect (authorization code + PKCE), with the
+SvelteKit server as a confidential client (`src/lib/server/oidc.ts`):
+
+- `GET /login` redirects to Keycloak; `GET /login/callback` exchanges the code and stores the
+  access/refresh/id tokens in httpOnly cookies.
+- `src/hooks.server.ts` refreshes the access token before it expires and injects it as a Bearer
+  header on server-side `/api` calls.
+- `POST /logout` clears the cookies and ends the Keycloak session.
+- `/items` is guarded and sends anonymous visitors through `/login`.
+
+Configure with `KEYCLOAK_URL` (browser-facing), `KEYCLOAK_INTERNAL_URL` (optional, server-side),
+`KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID` and `KEYCLOAK_CLIENT_SECRET`.

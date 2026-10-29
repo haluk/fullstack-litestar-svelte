@@ -1,0 +1,14 @@
+from litestar import Controller, get
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from {{ package_name }}.domain.dashboard.schemas import DashboardSummary
+from {{ package_name }}.domain.dashboard.services import DashboardService
+
+
+class DashboardController(Controller):
+    path = "/dashboard"
+    tags = ["dashboard"]
+
+    @get()
+    async def get_summary(self, db_session: AsyncSession) -> DashboardSummary:
+        return await DashboardService(db_session).summary()

@@ -1,0 +1,20 @@
+"""Database configuration: advanced-alchemy async SQLAlchemy + Litestar plugin."""
+from advanced_alchemy.extensions.litestar import (
+    AlembicAsyncConfig,
+    SQLAlchemyAsyncConfig,
+    SQLAlchemyPlugin,
+)
+
+from {{ package_name }}.config import Settings
+
+
+def db_config(settings: Settings) -> SQLAlchemyAsyncConfig:
+    return SQLAlchemyAsyncConfig(
+        connection_string=settings.database_url,
+        before_send_handler="autocommit",
+        alembic_config=AlembicAsyncConfig(script_location="migrations"),
+    )
+
+
+def sqlalchemy_plugin(settings: Settings) -> SQLAlchemyPlugin:
+    return SQLAlchemyPlugin(config=db_config(settings))

@@ -1,0 +1,8 @@
+from advanced_alchemy.service import SQLAlchemyAsyncRepositoryService
+
+from {{ package_name }}.domain.items.models import Item
+from {{ package_name }}.domain.items.repositories import ItemRepository
+
+
+class ItemService(SQLAlchemyAsyncRepositoryService[Item, ItemRepository]):
+    repository_type = ItemRepository

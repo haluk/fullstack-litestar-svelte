@@ -1,0 +1,10 @@
+import pytest
+
+pytestmark = pytest.mark.integration
+
+
+async def test_db_session_dependency_round_trips(client) -> None:
+    # /api/db-check uses the auto-injected db_session to run SELECT 1
+    response = await client.get("/api/db-check")
+    assert response.status_code == 200
+    assert response.json() == {"db": 1}

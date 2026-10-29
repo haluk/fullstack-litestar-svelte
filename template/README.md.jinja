@@ -1,0 +1,95 @@
+# {{ project_name }}
+
+Full-stack monorepo generated from `copier-uv-fullstack`.
+
+- **Backend:** Litestar + advanced-alchemy (Postgres), package `{{ package_name }}`
+- **Frontend:** SvelteKit + shadcn-svelte
+- **Auth:** Keycloak (OIDC) — login, registration and user management are delegated to it
+- **Deploy:** docker compose + nginx
+
+## Layout
+
+```
+{{ project_slug }}/
+├── backend/    # Litestar API (uv)
+├── frontend/   # SvelteKit app (bun)
+├── deploy/     # nginx config, Keycloak realm import
+├── compose.yaml
+├── justfile     # task runner
+└── Makefile     # same tasks for `make` users
+```
+
+> Every `just <task>` below has an identical `make <task>` target — use whichever you prefer.
+
+## Getting started
+
+A git-ignored `.env` was generated with your answers — review it first.
+
+### Dockerized (everything in containers)
+
+```bash
+just dev        # postgres + keycloak + api (reload) + web (dev) via docker compose
+```
+
+The web dev server is published on `http://localhost:{{ frontend_port }}`. The first
+`just dev`/`just up` is slow because it runs `bun install` in the container — wait for the
+`VITE ... ready` line (`docker compose logs -f web`) before opening the page.
+
+### Local (run api + web on your machine)
+
+Runs the backend and frontend directly on your host against a dockerized Postgres. The
+`.env` `DATABASE_URL` already points at `{{ db_host }}:{{ db_port }}`, and Vite proxies
+`/api` to the local backend.
+
+```bash
+just bootstrap  # uv sync + bun install (once)
+just db         # start only Postgres + Keycloak in docker
+just be-upgrade # apply migrations to the local db (once, and after new migrations)
+just be-run     # backend  -> http://localhost:{{ backend_port }}
+just fe-run     # frontend -> http://localhost:{{ frontend_port }}  (in a second terminal)
+```
+
+Prefer a local Postgres over docker? Set `DATABASE_URL` in `.env` to point at it and skip
+`just db`.
+
+## Authentication (Keycloak)
+
+All sign-in happens in Keycloak; the app has no passwords or user table of its own.
+
+- **Keycloak** runs in docker compose (`http://localhost:{{ keycloak_port }}` in dev, `/auth/` behind
+  nginx in prod). On first boot it imports `deploy/keycloak/realm.json`: realm `{{ project_slug }}`,
+  confidential client `{{ project_slug }}-web`, realm roles `user`/`admin`, and self-registration enabled.
+  Admin console: `http://localhost:{{ keycloak_port }}/admin` (user `admin`, password `KEYCLOAK_ADMIN_PASSWORD`).
+- **Frontend** (SvelteKit server) is the OIDC client: `/login` redirects to Keycloak (authorization
+  code + PKCE), `/login/callback` exchanges the code, and tokens are kept in httpOnly cookies and
+  refreshed automatically. `/logout` also ends the Keycloak session.
+- **Backend** trusts only Keycloak: every `/api` route except `/api/health` and `/api/db-check`
+  requires `Authorization: Bearer <access token>`, verified against the realm's JWKS (signature,
+  issuer, audience `{{ project_slug }}-api`, expiry). `GET /api/me` returns the caller; restrict a route
+  to a realm role with `guards=[requires_realm_role("admin")]`.
+
+The realm import runs only when the realm doesn't exist yet. Change clients, roles or users in the
+admin console afterwards (in dev, `docker compose down -v` resets Keycloak to the import file).
+
+## Middleware & hardening
+
+| Concern | Where | Default |
+|---|---|---|
+| Request IDs | nginx mints `X-Request-ID`; SvelteKit and the API reuse it and echo it back | on |
+| Logging | API logs `[request-id]` on every line plus one request and one response line; `Authorization` and cookies are masked | `LOG_LEVEL=INFO`, `LOG_REQUESTS=true` |
+| Compression | nginx gzip (static assets are pre-compressed by SvelteKit) | on |
+| Security headers | SvelteKit sets a nonce-based Content-Security-Policy; nginx adds `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy` (HSTS commented out until you serve HTTPS) | on |
+| Rate limiting | nginx per client IP (429); API per signed-in user | `RATE_LIMIT_PER_MINUTE=300` |
+| CORS | API, only for browser clients on other origins | off (`CORS_ORIGINS=`) |
+| Allowed hosts | API `Host` allowlist, e.g. `api,{{ domain }}` | off (`ALLOWED_HOSTS=`) |
+| Metrics | Prometheus at `/metrics` on the api service; nginx doesn't route it, so scrape it inside the network | off (`METRICS_ENABLED=false`) |
+
+CSRF and session middleware are intentionally absent: the API authenticates with bearer
+tokens (nothing for a browser to forge), and SvelteKit already checks the origin of form
+posts and keeps the session in `SameSite=Lax` httpOnly cookies.
+
+## Updating from the template
+
+```bash
+copier update --trust
+```

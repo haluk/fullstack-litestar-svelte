@@ -1,0 +1,59 @@
+{
+  "realm": "{{ project_slug }}",
+  "displayName": "{{ project_name }}",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "roles": {
+    "realm": [
+      { "name": "user", "description": "Regular application user" },
+      { "name": "admin", "description": "Application administrator" }
+    ]
+  },
+  "defaultRole": {
+    "name": "default-roles-{{ project_slug }}",
+    "composite": true,
+    "composites": { "realm": ["offline_access", "uma_authorization", "user"] }
+  },
+  "clients": [
+    {
+      "clientId": "{{ project_slug }}-web",
+      "name": "{{ project_name }} web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KEYCLOAK_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["${APP_ORIGIN}/login/callback"],
+      "webOrigins": ["${APP_ORIGIN}"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "${APP_ORIGIN}/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "{{ project_slug }}-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ]
+}

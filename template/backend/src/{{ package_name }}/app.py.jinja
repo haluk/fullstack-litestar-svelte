@@ -1,0 +1,73 @@
+"""Litestar application factory."""
+from typing import Any
+
+from litestar import Litestar, Request, Router, get
+from litestar.plugins.prometheus import PrometheusController
+from litestar.types import ControllerRouterHandler, Middleware
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from {{ package_name }}.config import Settings, get_settings
+from {{ package_name }}.domain.dashboard.controllers import DashboardController
+from {{ package_name }}.domain.items.controllers import ItemController
+from {{ package_name }}.lib.auth import KeycloakTokenVerifier, KeycloakUser, build_keycloak_auth
+from {{ package_name }}.lib.db import sqlalchemy_plugin
+from {{ package_name }}.lib.observability import (
+    cors_config,
+    logging_config,
+    prometheus_config,
+    rate_limit,
+    request_logging,
+)
+from {{ package_name }}.lib.request_id import RequestIdMiddleware
+
+
+@get("/health", sync_to_thread=False)
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@get("/db-check")
+async def db_check(db_session: AsyncSession) -> dict[str, int]:
+    result = await db_session.execute(text("SELECT 1"))
+    return {"db": result.scalar_one()}
+
+
+@get("/me", sync_to_thread=False)
+def me(request: Request[KeycloakUser, dict[str, Any], Any]) -> KeycloakUser:
+    """The current user, as asserted by Keycloak."""
+    return request.user
+
+
+def create_app(
+    token_verifier: KeycloakTokenVerifier | None = None, settings: Settings | None = None
+) -> Litestar:
+    settings = settings or get_settings()
+    route_handlers: list[ControllerRouterHandler] = [
+        Router(path="/api", route_handlers=[health, db_check, me, ItemController, DashboardController])
+    ]
+    metrics = prometheus_config(settings)
+    if metrics:
+        route_handlers.append(PrometheusController)
+
+    # Outermost first: tag the request, measure and log it (401s included), authenticate,
+    # then rate-limit per authenticated user.
+    middleware: list[Middleware | None] = [
+        RequestIdMiddleware(),
+        metrics.middleware if metrics else None,
+        request_logging(settings),
+        build_keycloak_auth(settings, token_verifier),
+        rate_limit(settings),
+    ]
+    return Litestar(
+        route_handlers=route_handlers,
+        plugins=[sqlalchemy_plugin(settings)],
+        middleware=[m for m in middleware if m is not None],
+        logging_config=logging_config(settings),
+        cors_config=cors_config(settings),
+        allowed_hosts=settings.allowed_hosts or None,
+        debug=settings.debug,
+    )
+
+
+app = create_app()

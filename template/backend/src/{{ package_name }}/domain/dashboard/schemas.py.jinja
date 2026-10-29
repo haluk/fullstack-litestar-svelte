@@ -1,0 +1,21 @@
+from __future__ import annotations
+
+from datetime import date
+
+import msgspec
+
+from {{ package_name }}.domain.items.schemas import ItemRead
+
+
+class DailyCount(msgspec.Struct):
+    day: date
+    count: int
+
+
+class DashboardSummary(msgspec.Struct):
+    total_items: int
+    created_last_7_days: int
+    created_previous_7_days: int
+    described_items: int
+    daily: list[DailyCount]
+    recent: list[ItemRead]

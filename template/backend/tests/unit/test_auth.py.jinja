@@ -1,0 +1,81 @@
+import re
+import time
+from types import SimpleNamespace
+
+import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
+from litestar.exceptions import PermissionDeniedException
+
+from {{ package_name }}.config import Settings
+from {{ package_name }}.lib.auth import AUTH_EXCLUDE, KeycloakUser, requires_realm_role
+
+
+def test_exclude_patterns_are_anchored() -> None:
+    assert all(p.startswith("^") for p in AUTH_EXCLUDE)
+
+
+def test_exclude_does_not_leak_via_substring() -> None:
+    assert not any(re.search(p, "/admin/api/health") for p in AUTH_EXCLUDE)
+    assert not any(re.search(p, "/api/items") for p in AUTH_EXCLUDE)
+    assert not any(re.search(p, "/api/me") for p in AUTH_EXCLUDE)
+    assert any(re.search(p, "/api/health") for p in AUTH_EXCLUDE)
+    assert not any(re.search(p, "/api/metrics") for p in AUTH_EXCLUDE)
+
+
+def test_settings_split_public_issuer_from_internal_jwks_url() -> None:
+    settings = Settings(
+        keycloak_url="http://localhost:8080",
+        keycloak_internal_url="http://keycloak:8080",
+        keycloak_realm="demo",
+    )
+    assert settings.keycloak_issuer == "http://localhost:8080/realms/demo"
+    assert settings.keycloak_jwks_url == "http://keycloak:8080/realms/demo/protocol/openid-connect/certs"
+    assert Settings(keycloak_url="http://kc", keycloak_realm="demo").keycloak_jwks_url.startswith("http://kc/")
+
+
+def test_verifier_accepts_valid_token(token_verifier, make_token) -> None:
+    claims = token_verifier.verify(make_token())
+    assert claims["iss"] == token_verifier.issuer
+    assert claims["aud"] == token_verifier.audience
+
+
+async def test_me_returns_keycloak_user(app_client, auth_headers) -> None:
+    resp = await app_client.get("/api/me", headers=auth_headers(realm_access={"roles": ["user", "admin"]}))
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "sub": "user-123",
+        "username": "ada",
+        "email": "ada@example.com",
+        "name": "Ada Lovelace",
+        "roles": ["user", "admin"],
+    }
+
+
+async def test_missing_or_malformed_header_is_rejected(app_client) -> None:
+    assert (await app_client.get("/api/me")).status_code == 401
+    assert (await app_client.get("/api/me", headers={"Authorization": "Basic abc"})).status_code == 401
+    assert (await app_client.get("/api/me", headers={"Authorization": "Bearer not-a-jwt"})).status_code == 401
+
+
+async def test_rejects_untrusted_tokens(app_client, make_token) -> None:
+    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    bad_tokens = {
+        "expired": make_token(iat=int(time.time()) - 600, exp=int(time.time()) - 300),
+        "wrong issuer": make_token(iss="http://evil.test/realms/test"),
+        "wrong audience": make_token(aud="account"),
+        "no subject": make_token(sub=None),
+        "foreign signature": make_token(key=other_key),
+    }
+    for reason, token in bad_tokens.items():
+        resp = await app_client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 401, reason
+
+
+def test_requires_realm_role_guard() -> None:
+    guard = requires_realm_role("admin")
+    admin = KeycloakUser(sub="1", username="a", roles=["user", "admin"])
+    plain = KeycloakUser(sub="2", username="b", roles=["user"])
+
+    guard(SimpleNamespace(user=admin), None)  # type: ignore[arg-type]
+    with pytest.raises(PermissionDeniedException):
+        guard(SimpleNamespace(user=plain), None)  # type: ignore[arg-type]

@@ -1,0 +1,32 @@
+from uuid import uuid4
+
+import pytest
+
+pytestmark = pytest.mark.integration
+
+
+async def test_item_crud_requires_auth(client, auth_headers) -> None:
+    # unauthenticated create is rejected (items are protected)
+    resp = await client.post("/api/items", json={"name": "Widget"})
+    assert resp.status_code == 401
+
+    headers = auth_headers()
+
+    # authenticated create
+    resp = await client.post("/api/items", json={"name": "Widget", "description": "a thing"}, headers=headers)
+    assert resp.status_code == 201
+    item_id = resp.json()["id"]
+
+    # read (also requires auth in this template)
+    resp = await client.get("/api/items", headers=headers)
+    assert resp.status_code == 200
+    assert any(i["id"] == item_id for i in resp.json())
+
+    # authenticated delete
+    resp = await client.delete(f"/api/items/{item_id}", headers=headers)
+    assert resp.status_code == 204
+
+
+async def test_get_missing_item_returns_404(client, auth_headers) -> None:
+    resp = await client.get(f"/api/items/{uuid4()}", headers=auth_headers())
+    assert resp.status_code == 404

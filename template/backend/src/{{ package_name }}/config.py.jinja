@@ -1,0 +1,53 @@
+"""Application settings, loaded from environment / .env."""
+from typing import Annotated, Any
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    database_url: str = "postgresql+asyncpg://{{ db_host }}:{{ db_port }}/{{ db_name }}"
+    # Browser-facing Keycloak URL; tokens carry "<keycloak_url>/realms/<realm>" as issuer.
+    keycloak_url: str = "http://localhost:{{ keycloak_port }}"
+    # Server-to-server Keycloak URL for fetching signing keys (defaults to keycloak_url),
+    # e.g. http://keycloak:8080 inside Docker Compose.
+    keycloak_internal_url: str | None = None
+    keycloak_realm: str = "{{ project_slug }}"
+    # Audience the access token must carry (added by the realm's audience mapper).
+    keycloak_audience: str = "{{ project_slug }}-api"
+    debug: bool = False
+
+    log_level: str = "INFO"
+    # Log one line per request and response; Authorization and cookies are obfuscated.
+    log_requests: bool = True
+    # Browser origins allowed to call the API directly, comma-separated. Empty disables CORS,
+    # which is right while browsers only talk to SvelteKit on the same origin.
+    cors_origins: Annotated[list[str], NoDecode] = []
+    # Accepted Host headers, comma-separated (e.g. "api,example.com"). Empty accepts any.
+    allowed_hosts: Annotated[list[str], NoDecode] = []
+    # Requests per minute per signed-in user (per client IP otherwise). 0 disables.
+    rate_limit_per_minute: int = 300
+    # Serve Prometheus metrics at /metrics. nginx doesn't route it; scrape it internally.
+    metrics_enabled: bool = False
+
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def _split_comma_separated(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @property
+    def keycloak_issuer(self) -> str:
+        return f"{self.keycloak_url.rstrip('/')}/realms/{self.keycloak_realm}"
+
+    @property
+    def keycloak_jwks_url(self) -> str:
+        base = (self.keycloak_internal_url or self.keycloak_url).rstrip("/")
+        return f"{base}/realms/{self.keycloak_realm}/protocol/openid-connect/certs"
+
+
+def get_settings() -> Settings:
+    return Settings()

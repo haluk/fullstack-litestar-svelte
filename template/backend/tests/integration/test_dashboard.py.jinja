@@ -1,0 +1,47 @@
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+pytestmark = pytest.mark.integration
+
+
+async def test_dashboard_requires_auth(client) -> None:
+    assert (await client.get("/api/dashboard")).status_code == 401
+
+
+async def test_dashboard_summarizes_items(client, auth_headers, postgres_url) -> None:
+    from {{ package_name }}.domain.items.models import Item
+
+    now = datetime.now(UTC)
+    engine = create_async_engine(postgres_url)
+    async with async_sessionmaker(engine)() as session:
+        session.add_all(
+            [
+                Item(name="today", description="fresh", created_at=now),
+                Item(name="today-2", created_at=now),
+                Item(name="3 days ago", created_at=now - timedelta(days=3)),
+                Item(name="10 days ago", description="older", created_at=now - timedelta(days=10)),
+                Item(name="ancient", created_at=now - timedelta(days=40)),
+            ]
+        )
+        await session.commit()
+    await engine.dispose()
+
+    resp = await client.get("/api/dashboard", headers=auth_headers())
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_items"] == 5
+    assert body["created_last_7_days"] == 3
+    assert body["created_previous_7_days"] == 1
+    assert body["described_items"] == 2
+
+    daily = body["daily"]
+    assert len(daily) == 14
+    assert daily[-1] == {"day": now.date().isoformat(), "count": 2}
+    assert sum(d["count"] for d in daily) == 4  # the 40-day-old item is outside the window
+
+    recent = [i["name"] for i in body["recent"]]
+    assert len(recent) == 5
+    assert set(recent[:2]) == {"today", "today-2"}  # newest first
+    assert recent[-1] == "ancient"

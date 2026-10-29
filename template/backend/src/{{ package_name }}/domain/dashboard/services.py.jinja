@@ -1,0 +1,57 @@
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import Date, cast, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from {{ package_name }}.domain.dashboard.schemas import DailyCount, DashboardSummary
+from {{ package_name }}.domain.items.models import Item
+from {{ package_name }}.domain.items.schemas import ItemRead
+
+
+class DashboardService:
+    """Read-only aggregates over the items table for the dashboard."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def summary(self, *, days: int = 14, now: datetime | None = None) -> DashboardSummary:
+        now = now or datetime.now(UTC)
+        today = now.date()
+        first_day = today - timedelta(days=days - 1)
+        week_ago = now - timedelta(days=7)
+        two_weeks_ago = now - timedelta(days=14)
+
+        totals = (
+            await self.session.execute(
+                select(
+                    func.count(),
+                    func.count().filter(Item.created_at >= week_ago),
+                    func.count().filter(Item.created_at >= two_weeks_ago, Item.created_at < week_ago),
+                    func.count(Item.description).filter(Item.description != ""),
+                )
+            )
+        ).one()
+
+        # bucket by UTC calendar day; days without items are filled with 0 below
+        day_col = cast(func.timezone("UTC", Item.created_at), Date)
+        rows = await self.session.execute(
+            select(day_col, func.count()).where(day_col >= first_day).group_by(day_col)
+        )
+        per_day = {day: count for day, count in rows.tuples()}
+        daily = [
+            DailyCount(day=first_day + timedelta(days=i), count=per_day.get(first_day + timedelta(days=i), 0))
+            for i in range(days)
+        ]
+
+        recent = (
+            await self.session.scalars(select(Item).order_by(Item.created_at.desc()).limit(5))
+        ).all()
+
+        return DashboardSummary(
+            total_items=totals[0],
+            created_last_7_days=totals[1],
+            created_previous_7_days=totals[2],
+            described_items=totals[3],
+            daily=daily,
+            recent=[ItemRead.from_model(i) for i in recent],
+        )

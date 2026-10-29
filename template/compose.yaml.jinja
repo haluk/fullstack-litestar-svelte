@@ -1,0 +1,81 @@
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: {{ db_name }}
+      POSTGRES_USER: {{ db_user }}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - db_data:/var/lib/postgresql
+    ports:
+      # expose Postgres on the host so localhost:{{ db_port }} (from .env) works for host-based runs
+      - "{{ db_port }}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ db_user }} -d {{ db_name }}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    # start-dev uses an embedded dev database; the realm (client, roles) is imported on boot.
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Public URL used in browser redirects and as the token issuer. Back-channel calls
+      # from api/web (http://keycloak:8080) are answered on their own host.
+      KC_HOSTNAME: http://localhost:{{ keycloak_port }}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      # resolved inside realm.json at import time
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-change-me-client-secret}
+      APP_ORIGIN: http://localhost:{{ frontend_port }}
+    volumes:
+      - ./deploy/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+      - keycloak_data:/opt/keycloak/data
+    ports:
+      - "{{ keycloak_port }}:8080"
+
+  api:
+    image: ghcr.io/astral-sh/uv:0.13.6-python3.14-trixie-slim
+    working_dir: /app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://{{ db_user }}:${POSTGRES_PASSWORD:-changeme}@db:5432/{{ db_name }}
+      KEYCLOAK_URL: http://localhost:{{ keycloak_port }}
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_REALM: {{ project_slug }}
+      LITESTAR_APP: {{ package_name }}.app:app
+    volumes:
+      - ./backend:/app
+    command: sh -c "uv sync && uv run litestar database upgrade --no-prompt && uv run litestar run --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "{{ backend_port }}:8000"
+
+  web:
+    image: oven/bun:1.4-slim
+    working_dir: /app
+    depends_on:
+      - api
+      - keycloak
+    environment:
+      # browser /api calls go through Vite's proxy; server-side (SSR) calls go straight to
+      # the api service (the container can't reach itself via the host-published port)
+      VITE_API_PROXY: http://api:8000
+      INTERNAL_API_URL: http://api:8000
+      KEYCLOAK_URL: http://localhost:{{ keycloak_port }}
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_REALM: {{ project_slug }}
+      KEYCLOAK_CLIENT_ID: {{ project_slug }}-web
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-change-me-client-secret}
+    volumes:
+      - ./frontend:/app
+    command: sh -c "bun install && bun run dev --host 0.0.0.0 --port 3000"
+    ports:
+      - "{{ frontend_port }}:3000"
+
+volumes:
+  db_data:
+  keycloak_data:
