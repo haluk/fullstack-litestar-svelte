@@ -13,9 +13,10 @@ help: ## list available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-bootstrap: ## install backend + frontend deps
+bootstrap: ## install backend + frontend deps and the Playwright browser
 	cd backend && uv sync
 	cd frontend && bun install
+	cd frontend && bunx playwright install chromium
 
 # --- local (host) development: run api + web on your machine against the dockerized db + keycloak ---
 

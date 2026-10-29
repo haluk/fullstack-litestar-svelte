@@ -40,6 +40,8 @@ filterwarnings = [
 [tool.ruff]
 target-version = "py{{ python_version | replace('.', '') }}"
 line-length = 100
+# Alembic writes these; style-checking generated code only creates churn.
+extend-exclude = ["migrations/versions"]
 
 [tool.mypy]
 python_version = "{{ python_version }}"

@@ -93,7 +93,7 @@ domain:
 
 bootstrap:
   type: bool
-  help: Run uv sync and bun install after generation
+  help: Run uv sync, bun install and install Playwright's Chromium after generation
   default: false
 
 _tasks:
@@ -102,5 +102,8 @@ _tasks:
     working_directory: "backend"
     when: "{{ bootstrap }}"
   - command: "bun install"
+    working_directory: "frontend"
+    when: "{{ bootstrap }}"
+  - command: "bunx playwright install chromium"
     working_directory: "frontend"
     when: "{{ bootstrap }}"

@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+from pathlib import Path
 
 
 def test_backend_dockerfile_renders(render, tmp_path):
@@ -242,3 +243,20 @@ def test_bootstrap_defaults_off_skips_install(render, tmp_path):
     project = render(tmp_path)
     assert not (project / "backend" / ".venv").exists()
     assert not (project / "frontend" / "node_modules").exists()
+
+
+def test_bootstrap_installs_the_playwright_browser(render, tmp_path):
+    # Regression: e2e failed on a fresh clone because bootstrap never installed Chromium.
+    project = render(tmp_path)
+    for name in ("justfile", "Makefile"):
+        text = (project / name).read_text()
+        recipe = text.split("\nbootstrap:", 1)[1].split("\n\n", 1)[0]
+        assert "bunx playwright install chromium" in recipe, f"{name}: {recipe!r}"
+
+
+def test_copier_bootstrap_task_matches_just_bootstrap():
+    import yaml
+
+    copier_yml = yaml.safe_load((Path(__file__).resolve().parent.parent / "copier.yml").read_text())
+    tasks = [t for t in copier_yml["_tasks"] if isinstance(t, dict) and t.get("when") == "{{ bootstrap }}"]
+    assert {"command": "bunx playwright install chromium", "working_directory": "frontend", "when": "{{ bootstrap }}"} in tasks

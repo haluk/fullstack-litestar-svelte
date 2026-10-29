@@ -42,7 +42,7 @@ Runs the backend and frontend directly on your host against a dockerized Postgre
 `/api` to the local backend.
 
 ```bash
-just bootstrap  # uv sync + bun install (once)
+just bootstrap  # uv sync + bun install + Playwright's Chromium (once)
 just db         # start only Postgres + Keycloak in docker
 just be-upgrade # apply migrations to the local db (once, and after new migrations)
 just be-run     # backend  -> http://localhost:{{ backend_port }}

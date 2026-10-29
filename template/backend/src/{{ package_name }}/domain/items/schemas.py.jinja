@@ -20,5 +20,5 @@ class ItemRead(msgspec.Struct):
     created_at: datetime
 
     @classmethod
-    def from_model(cls, item: Item) -> "ItemRead":
+    def from_model(cls, item: Item) -> ItemRead:
         return cls(id=item.id, name=item.name, description=item.description, created_at=item.created_at)

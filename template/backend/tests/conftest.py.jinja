@@ -66,12 +66,12 @@ def auth_headers() -> Callable[..., dict[str, str]]:
 def _docker_available() -> bool:
     client = None
     try:
-        import docker  # noqa: PLC0415
+        import docker
 
         client = docker.from_env()
         client.ping()
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001  any failure means no usable Docker
         return False
     finally:
         if client is not None:
@@ -82,7 +82,7 @@ def _docker_available() -> bool:
 def postgres_url() -> Iterator[str]:
     if not _docker_available():
         pytest.skip("Docker not available for testcontainers")
-    from testcontainers.postgres import PostgresContainer  # noqa: PLC0415
+    from testcontainers.postgres import PostgresContainer
 
     with PostgresContainer("postgres:18-alpine") as postgres:
         sync_url = postgres.get_connection_url()  # postgresql+psycopg2://...
@@ -103,7 +103,7 @@ async def client(
     """Client backed by a disposable Postgres, schema created fresh."""
     monkeypatch.setenv("DATABASE_URL", postgres_url)
     # Import models so their tables register on the shared metadata.
-    import {{ package_name }}.domain.items.models  # noqa: F401,PLC0415
+    import {{ package_name }}.domain.items.models  # noqa: F401
 
     engine = create_async_engine(postgres_url)
     async with engine.begin() as conn:

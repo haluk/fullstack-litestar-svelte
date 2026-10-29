@@ -78,7 +78,7 @@
 					<div class="mb-2 grid size-10 place-items-center rounded-lg bg-muted">
 						<feature.icon class="size-5" />
 					</div>
-					<Card.Title>{feature.title}</Card.Title>
+					<Card.Title role="heading" aria-level={3}>{feature.title}</Card.Title>
 					<Card.Description>{feature.text}</Card.Description>
 				</Card.Header>
 			</Card.Root>

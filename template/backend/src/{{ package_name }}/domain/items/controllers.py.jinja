@@ -10,8 +10,9 @@ from {{ package_name }}.domain.items.services import ItemService
 
 class ItemController(Controller):
     path = "/items"
-    tags = ["items"]
-    dependencies = {"items_service": Provide(provide_items_service)}
+    tags = ("items",)
+    # Litestar declares dependencies as an instance attribute, so ClassVar would clash with mypy.
+    dependencies = {"items_service": Provide(provide_items_service)}  # noqa: RUF012
 
     @get()
     async def list_items(self, items_service: ItemService) -> list[ItemRead]:

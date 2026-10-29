@@ -5,10 +5,11 @@ set dotenv-load := true
 default:
 	@just --list
 
-# install backend + frontend deps
+# install backend + frontend deps and the Playwright browser
 bootstrap:
 	cd backend && uv sync
 	cd frontend && bun install
+	cd frontend && bunx playwright install chromium
 
 # --- local (host) development: run api + web on your machine against the dockerized db + keycloak ---
 
